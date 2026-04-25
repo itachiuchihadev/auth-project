@@ -46,7 +46,7 @@ public class AuthService : IAuthService
 
         var accessToken = GenerateJwtToken(user);
         var refreshToken = await GenerateAndStoreRefreshTokenAsync(user.Id, context);
-        
+
         return new AuthResponse
         {
             Success = true,
@@ -80,7 +80,7 @@ public class AuthService : IAuthService
 
         var accessToken = GenerateJwtToken(user);
         var refreshToken = await GenerateAndStoreRefreshTokenAsync(user.Id, context);
-        
+
         return new AuthResponse
         {
             Success = true,
@@ -103,7 +103,7 @@ public class AuthService : IAuthService
 
         var accessToken = GenerateJwtToken(user);
         var refreshToken = await GenerateAndStoreRefreshTokenAsync(user.Id, context);
-        
+
         return new AuthResponse
         {
             Success = true,
@@ -170,7 +170,7 @@ public class AuthService : IAuthService
 
         var accessToken = GenerateJwtToken(user);
         var refreshToken = await GenerateAndStoreRefreshTokenAsync(user.Id, context);
-        
+
         return new AuthResponse
         {
             Success = true,
@@ -198,11 +198,11 @@ public class AuthService : IAuthService
 
         // Generate new access token
         var newAccessToken = GenerateJwtToken(user);
-        
+
         // Optionally: invalidate old refresh token and generate new one
         storedToken.IsRevoked = true;
         storedToken.RevokedAt = DateTime.UtcNow;
-        
+
         var newRefreshToken = await GenerateAndStoreRefreshTokenAsync(user.Id, null);
         await _db.SaveChangesAsync();
 
@@ -226,7 +226,7 @@ public class AuthService : IAuthService
                 // Revoke specific refresh token
                 var token = await _db.RefreshTokens
                     .FirstOrDefaultAsync(rt => rt.Token == refreshToken && rt.UserId == userId);
-                
+
                 if (token != null)
                 {
                     token.IsRevoked = true;
@@ -239,7 +239,7 @@ public class AuthService : IAuthService
                 var tokens = await _db.RefreshTokens
                     .Where(rt => rt.UserId == userId && !rt.IsRevoked)
                     .ToListAsync();
-                
+
                 foreach (var token in tokens)
                 {
                     token.IsRevoked = true;
@@ -289,9 +289,9 @@ public class AuthService : IAuthService
         };
 
         var creds = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
-        
+
         var accessTokenExpireMinutes = int.Parse(_config["Jwt:AccessTokenExpireMinutes"] ?? "15");
-        
+
         var token = new JwtSecurityToken(
             issuer: _config["Jwt:Issuer"] ?? "AuthApi",
             audience: _config["Jwt:Audience"] ?? "AuthApiUsers",

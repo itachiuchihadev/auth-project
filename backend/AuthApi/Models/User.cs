@@ -12,7 +12,7 @@ public class User
     public string? OAuthProviderId { get; set; }
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public bool IsActive { get; set; } = true;
-    
+
     // Navigation property
     public ICollection<RefreshToken> RefreshTokens { get; set; } = new List<RefreshToken>();
 }
