@@ -1,0 +1,23 @@
+# Backend (C# / .NET)
+bin/
+obj/
+*.dll
+*.exe
+*.pdb
+*.user
+*.suo
+.vs/
+.vscode/
+
+# Frontend (Node.js / React)
+node_modules/
+dist/
+build/
+*.tsbuildinfo
+.env.local
+.env.*.local
+
+# General
+.DS_Store
+Thumbs.db
+*.log
