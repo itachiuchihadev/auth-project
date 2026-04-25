@@ -16,7 +16,7 @@ builder.Services.AddEndpointsApiExplorer();
 
 // ── DATABASE CONFIGURATION ────────────────────────────────────────────────────
 var dbProvider = builder.Configuration["Database:Provider"] ?? "SQLite";
-var connectionString = dbProvider.ToUpper() == "POSTGRESQL" 
+var connectionString = dbProvider.ToUpper() == "POSTGRESQL"
     ? builder.Configuration["Database:PostgresConnectionString"]
     : builder.Configuration["Database:ConnectionString"];
 

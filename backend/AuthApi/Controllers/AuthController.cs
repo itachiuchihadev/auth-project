@@ -1,8 +1,8 @@
+using System.Security.Claims;
 using AuthApi.Models;
 using AuthApi.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using System.Security.Claims;
 
 namespace AuthApi.Controllers;
 
