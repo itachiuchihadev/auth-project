@@ -12,6 +12,9 @@ public class User
     public string? OAuthProviderId { get; set; }
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public bool IsActive { get; set; } = true;
+    
+    // Navigation property
+    public ICollection<RefreshToken> RefreshTokens { get; set; } = new List<RefreshToken>();
 }
 
 public class LoginRequest
@@ -36,6 +39,7 @@ public class AuthResponse
 {
     public bool Success { get; set; }
     public string? Token { get; set; }
+    public string? RefreshToken { get; set; }
     public string? Message { get; set; }
     public UserDto? User { get; set; }
     public string? AuthMethod { get; set; }

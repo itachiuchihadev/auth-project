@@ -24,16 +24,16 @@ public class AuthController : ControllerBase
             string.IsNullOrWhiteSpace(request.Password))
             return BadRequest(new AuthResponse { Success = false, Message = "All fields are required." });
 
-        var result = await _auth.RegisterAsync(request);
+        var result = await _auth.RegisterAsync(request, HttpContext);
         return result.Success ? Ok(result) : BadRequest(result);
     }
 
     // ── 2. JWT LOGIN ──────────────────────────────────────────────────────────
-    /// <summary>Login with username and password; returns a JWT Bearer token.</summary>
+    /// <summary>Login with username and password; returns JWT access & refresh tokens.</summary>
     [HttpPost("login/jwt")]
     public async Task<IActionResult> LoginJwt([FromBody] LoginRequest request)
     {
-        var result = await _auth.LoginWithJwtAsync(request);
+        var result = await _auth.LoginWithJwtAsync(request, HttpContext);
         return result.Success ? Ok(result) : Unauthorized(result);
     }
 
@@ -47,19 +47,19 @@ public class AuthController : ControllerBase
             return BadRequest(new AuthResponse { Success = false, Message = "Missing or invalid Authorization header." });
 
         var credentials = authHeader["Basic ".Length..].Trim();
-        var result = await _auth.LoginWithBasicAuthAsync(credentials);
+        var result = await _auth.LoginWithBasicAuthAsync(credentials, HttpContext);
         return result.Success ? Ok(result) : Unauthorized(result);
     }
 
     // ── 4. API KEY LOGIN ──────────────────────────────────────────────────────
-    /// <summary>Exchange an API key for a JWT (also works directly via X-Api-Key header on any protected route).</summary>
+    /// <summary>Exchange an API key for JWT tokens.</summary>
     [HttpPost("login/apikey")]
     public async Task<IActionResult> LoginApiKey([FromBody] ApiKeyRequest request)
     {
         if (string.IsNullOrWhiteSpace(request.ApiKey))
             return BadRequest(new AuthResponse { Success = false, Message = "API key is required." });
 
-        var result = await _auth.LoginWithApiKeyAsync(request.ApiKey);
+        var result = await _auth.LoginWithApiKeyAsync(request.ApiKey, HttpContext);
         return result.Success ? Ok(result) : Unauthorized(result);
     }
 
@@ -76,8 +76,35 @@ public class AuthController : ControllerBase
         if (!validProviders.Contains(provider.ToLower()))
             return BadRequest(new AuthResponse { Success = false, Message = $"Unknown provider '{provider}'." });
 
-        var result = await _auth.LoginWithOAuthAsync(provider.ToLower(), token);
+        var result = await _auth.LoginWithOAuthAsync(provider.ToLower(), token, HttpContext);
         return result.Success ? Ok(result) : Unauthorized(result);
+    }
+
+    // ── 6. REFRESH ACCESS TOKEN ───────────────────────────────────────────────
+    /// <summary>Refresh the access token using a valid refresh token.</summary>
+    [HttpPost("refresh")]
+    [AllowAnonymous]
+    public async Task<IActionResult> Refresh([FromBody] RefreshTokenRequest request)
+    {
+        if (string.IsNullOrWhiteSpace(request.RefreshToken))
+            return BadRequest(new { message = "Refresh token is required." });
+
+        var result = await _auth.RefreshAccessTokenAsync(request.RefreshToken);
+        return result != null ? Ok(result) : Unauthorized(new { message = "Invalid or expired refresh token." });
+    }
+
+    // ── 7. LOGOUT ─────────────────────────────────────────────────────────────
+    /// <summary>Logout: revoke the refresh token to prevent future token refreshes.</summary>
+    [HttpPost("logout")]
+    [Authorize]
+    public async Task<IActionResult> Logout([FromBody] RefreshTokenRequest? request = null)
+    {
+        var idClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+        if (!int.TryParse(idClaim, out var userId))
+            return Unauthorized();
+
+        var success = await _auth.LogoutAsync(userId, request?.RefreshToken);
+        return success ? Ok(new { message = "Logged out successfully." }) : StatusCode(500, new { message = "Logout failed." });
     }
 
     // ── PROTECTED ENDPOINTS ───────────────────────────────────────────────────

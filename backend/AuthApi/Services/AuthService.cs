@@ -10,11 +10,13 @@ namespace AuthApi.Services;
 
 public interface IAuthService
 {
-    Task<AuthResponse> LoginWithJwtAsync(LoginRequest request);
-    Task<AuthResponse> RegisterAsync(RegisterRequest request);
-    Task<AuthResponse> LoginWithApiKeyAsync(string apiKey);
-    Task<AuthResponse> LoginWithBasicAuthAsync(string credentials);
-    Task<AuthResponse> LoginWithOAuthAsync(string provider, string token);
+    Task<AuthResponse> LoginWithJwtAsync(LoginRequest request, HttpContext? context = null);
+    Task<AuthResponse> RegisterAsync(RegisterRequest request, HttpContext? context = null);
+    Task<AuthResponse> LoginWithApiKeyAsync(string apiKey, HttpContext? context = null);
+    Task<AuthResponse> LoginWithBasicAuthAsync(string credentials, HttpContext? context = null);
+    Task<AuthResponse> LoginWithOAuthAsync(string provider, string token, HttpContext? context = null);
+    Task<RefreshTokenResponse?> RefreshAccessTokenAsync(string refreshToken);
+    Task<bool> LogoutAsync(int userId, string? refreshToken = null);
     Task<string> GenerateApiKeyAsync(int userId);
     Task<UserDto?> GetUserByIdAsync(int userId);
 }
@@ -31,7 +33,7 @@ public class AuthService : IAuthService
     }
 
     // ── 1. JWT LOGIN ──────────────────────────────────────────────────────────
-    public async Task<AuthResponse> LoginWithJwtAsync(LoginRequest request)
+    public async Task<AuthResponse> LoginWithJwtAsync(LoginRequest request, HttpContext? context = null)
     {
         var user = await _db.Users
             .FirstOrDefaultAsync(u => u.Username == request.Username && u.IsActive);
@@ -42,11 +44,14 @@ public class AuthService : IAuthService
             return new AuthResponse { Success = false, Message = "Invalid credentials." };
         }
 
-        var token = GenerateJwtToken(user);
+        var accessToken = GenerateJwtToken(user);
+        var refreshToken = await GenerateAndStoreRefreshTokenAsync(user.Id, context);
+        
         return new AuthResponse
         {
             Success = true,
-            Token = token,
+            Token = accessToken,
+            RefreshToken = refreshToken,
             AuthMethod = "JWT",
             Message = "Logged in via JWT.",
             User = MapToDto(user)
@@ -54,7 +59,7 @@ public class AuthService : IAuthService
     }
 
     // ── 2. REGISTER ───────────────────────────────────────────────────────────
-    public async Task<AuthResponse> RegisterAsync(RegisterRequest request)
+    public async Task<AuthResponse> RegisterAsync(RegisterRequest request, HttpContext? context = null)
     {
         if (await _db.Users.AnyAsync(u => u.Username == request.Username))
             return new AuthResponse { Success = false, Message = "Username already taken." };
@@ -73,11 +78,14 @@ public class AuthService : IAuthService
         _db.Users.Add(user);
         await _db.SaveChangesAsync();
 
-        var token = GenerateJwtToken(user);
+        var accessToken = GenerateJwtToken(user);
+        var refreshToken = await GenerateAndStoreRefreshTokenAsync(user.Id, context);
+        
         return new AuthResponse
         {
             Success = true,
-            Token = token,
+            Token = accessToken,
+            RefreshToken = refreshToken,
             AuthMethod = "JWT",
             Message = "Registration successful.",
             User = MapToDto(user)
@@ -85,7 +93,7 @@ public class AuthService : IAuthService
     }
 
     // ── 3. API KEY LOGIN ──────────────────────────────────────────────────────
-    public async Task<AuthResponse> LoginWithApiKeyAsync(string apiKey)
+    public async Task<AuthResponse> LoginWithApiKeyAsync(string apiKey, HttpContext? context = null)
     {
         var user = await _db.Users
             .FirstOrDefaultAsync(u => u.ApiKey == apiKey && u.IsActive);
@@ -93,11 +101,14 @@ public class AuthService : IAuthService
         if (user == null)
             return new AuthResponse { Success = false, Message = "Invalid API key." };
 
-        var token = GenerateJwtToken(user);
+        var accessToken = GenerateJwtToken(user);
+        var refreshToken = await GenerateAndStoreRefreshTokenAsync(user.Id, context);
+        
         return new AuthResponse
         {
             Success = true,
-            Token = token,
+            Token = accessToken,
+            RefreshToken = refreshToken,
             AuthMethod = "API Key",
             Message = "Logged in via API Key.",
             User = MapToDto(user)
@@ -105,7 +116,7 @@ public class AuthService : IAuthService
     }
 
     // ── 4. BASIC AUTH LOGIN ───────────────────────────────────────────────────
-    public async Task<AuthResponse> LoginWithBasicAuthAsync(string credentials)
+    public async Task<AuthResponse> LoginWithBasicAuthAsync(string credentials, HttpContext? context = null)
     {
         try
         {
@@ -115,7 +126,7 @@ public class AuthService : IAuthService
                 return new AuthResponse { Success = false, Message = "Invalid Basic Auth format." };
 
             var req = new LoginRequest { Username = parts[0], Password = parts[1] };
-            var result = await LoginWithJwtAsync(req);
+            var result = await LoginWithJwtAsync(req, context);
             if (result.Success)
                 result.AuthMethod = "Basic Auth";
             return result;
@@ -127,7 +138,7 @@ public class AuthService : IAuthService
     }
 
     // ── 5. OAUTH LOGIN (mock – real apps integrate Google/Facebook SDK) ───────
-    public async Task<AuthResponse> LoginWithOAuthAsync(string provider, string token)
+    public async Task<AuthResponse> LoginWithOAuthAsync(string provider, string token, HttpContext? context = null)
     {
         // In production: validate token with the provider's API.
         // Here we decode a mock token: "provider|userId|email"
@@ -157,18 +168,95 @@ public class AuthService : IAuthService
             await _db.SaveChangesAsync();
         }
 
-        var jwtToken = GenerateJwtToken(user);
+        var accessToken = GenerateJwtToken(user);
+        var refreshToken = await GenerateAndStoreRefreshTokenAsync(user.Id, context);
+        
         return new AuthResponse
         {
             Success = true,
-            Token = jwtToken,
+            Token = accessToken,
+            RefreshToken = refreshToken,
             AuthMethod = $"OAuth ({provider})",
             Message = $"Logged in via {provider} OAuth.",
             User = MapToDto(user)
         };
     }
 
-    // ── 6. GENERATE NEW API KEY ───────────────────────────────────────────────
+    // ── 6. REFRESH ACCESS TOKEN ───────────────────────────────────────────────
+    public async Task<RefreshTokenResponse?> RefreshAccessTokenAsync(string refreshToken)
+    {
+        var storedToken = await _db.RefreshTokens
+            .Include(rt => rt.User)
+            .FirstOrDefaultAsync(rt => rt.Token == refreshToken && !rt.IsRevoked);
+
+        if (storedToken == null || storedToken.ExpiresAt < DateTime.UtcNow)
+            return null;
+
+        var user = storedToken.User;
+        if (user == null || !user.IsActive)
+            return null;
+
+        // Generate new access token
+        var newAccessToken = GenerateJwtToken(user);
+        
+        // Optionally: invalidate old refresh token and generate new one
+        storedToken.IsRevoked = true;
+        storedToken.RevokedAt = DateTime.UtcNow;
+        
+        var newRefreshToken = await GenerateAndStoreRefreshTokenAsync(user.Id, null);
+        await _db.SaveChangesAsync();
+
+        var expiresIn = int.Parse(_config["Jwt:AccessTokenExpireMinutes"] ?? "15") * 60;
+
+        return new RefreshTokenResponse
+        {
+            AccessToken = newAccessToken,
+            RefreshToken = newRefreshToken,
+            ExpiresIn = expiresIn
+        };
+    }
+
+    // ── 7. LOGOUT ─────────────────────────────────────────────────────────────
+    public async Task<bool> LogoutAsync(int userId, string? refreshToken = null)
+    {
+        try
+        {
+            if (!string.IsNullOrEmpty(refreshToken))
+            {
+                // Revoke specific refresh token
+                var token = await _db.RefreshTokens
+                    .FirstOrDefaultAsync(rt => rt.Token == refreshToken && rt.UserId == userId);
+                
+                if (token != null)
+                {
+                    token.IsRevoked = true;
+                    token.RevokedAt = DateTime.UtcNow;
+                }
+            }
+            else
+            {
+                // Revoke all refresh tokens for user
+                var tokens = await _db.RefreshTokens
+                    .Where(rt => rt.UserId == userId && !rt.IsRevoked)
+                    .ToListAsync();
+                
+                foreach (var token in tokens)
+                {
+                    token.IsRevoked = true;
+                    token.RevokedAt = DateTime.UtcNow;
+                }
+            }
+
+            await _db.SaveChangesAsync();
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    // ── 8. GENERATE NEW API KEY ───────────────────────────────────────────────
     public async Task<string> GenerateApiKeyAsync(int userId)
     {
         var user = await _db.Users.FindAsync(userId);
@@ -201,14 +289,39 @@ public class AuthService : IAuthService
         };
 
         var creds = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
+        
+        var accessTokenExpireMinutes = int.Parse(_config["Jwt:AccessTokenExpireMinutes"] ?? "15");
+        
         var token = new JwtSecurityToken(
             issuer: _config["Jwt:Issuer"] ?? "AuthApi",
             audience: _config["Jwt:Audience"] ?? "AuthApiUsers",
             claims: claims,
-            expires: DateTime.UtcNow.AddHours(8),
+            expires: DateTime.UtcNow.AddMinutes(accessTokenExpireMinutes),
             signingCredentials: creds);
 
         return new JwtSecurityTokenHandler().WriteToken(token);
+    }
+
+    private async Task<string> GenerateAndStoreRefreshTokenAsync(int userId, HttpContext? context)
+    {
+        var refreshToken = Convert.ToBase64String(Guid.NewGuid().ToByteArray())
+            .Replace("=", "").Replace("+", "-").Replace("/", "_");
+
+        var refreshTokenExpireDays = int.Parse(_config["Jwt:RefreshTokenExpireDays"] ?? "7");
+
+        var refreshTokenEntity = new RefreshToken
+        {
+            UserId = userId,
+            Token = refreshToken,
+            ExpiresAt = DateTime.UtcNow.AddDays(refreshTokenExpireDays),
+            IpAddress = context?.Connection?.RemoteIpAddress?.ToString(),
+            UserAgent = context?.Request?.Headers["User-Agent"].ToString()
+        };
+
+        _db.RefreshTokens.Add(refreshTokenEntity);
+        await _db.SaveChangesAsync();
+
+        return refreshToken;
     }
 
     private static string GenerateRandomApiKey() =>

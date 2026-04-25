@@ -14,9 +14,23 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
 
-// In-memory database (swap for SQL Server / PostgreSQL in production)
+// ── DATABASE CONFIGURATION ────────────────────────────────────────────────────
+var dbProvider = builder.Configuration["Database:Provider"] ?? "SQLite";
+var connectionString = dbProvider.ToUpper() == "POSTGRESQL" 
+    ? builder.Configuration["Database:PostgresConnectionString"]
+    : builder.Configuration["Database:ConnectionString"];
+
 builder.Services.AddDbContext<AppDbContext>(opt =>
-    opt.UseInMemoryDatabase("AuthDb"));
+{
+    if (dbProvider.ToUpper() == "POSTGRESQL")
+    {
+        opt.UseNpgsql(connectionString);
+    }
+    else
+    {
+        opt.UseSqlite(connectionString);
+    }
+});
 
 builder.Services.AddScoped<IAuthService, AuthService>();
 
@@ -54,7 +68,7 @@ builder.Services.AddSwaggerGen(c =>
     {
         Title = "Auth API",
         Version = "v1",
-        Description = "Multi-mechanism authentication: JWT · Basic Auth · API Key · OAuth"
+        Description = "Multi-mechanism authentication: JWT · Basic Auth · API Key · OAuth · Refresh Tokens"
     });
 
     c.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme
@@ -64,7 +78,7 @@ builder.Services.AddSwaggerGen(c =>
         Scheme = "bearer",
         BearerFormat = "JWT",
         In = ParameterLocation.Header,
-        Description = "Enter your JWT token"
+        Description = "Enter your JWT access token"
     });
 
     c.AddSecurityDefinition("ApiKey", new OpenApiSecurityScheme
@@ -97,6 +111,14 @@ builder.Services.AddSwaggerGen(c =>
 });
 
 var app = builder.Build();
+
+// ── DATABASE MIGRATION ────────────────────────────────────────────────────────
+using (var scope = app.Services.CreateScope())
+{
+    var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+    db.Database.Migrate();
+}
+
 
 // ── SEED DEMO DATA ────────────────────────────────────────────────────────────
 using (var scope = app.Services.CreateScope())

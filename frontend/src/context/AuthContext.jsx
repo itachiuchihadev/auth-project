@@ -6,6 +6,7 @@ const AuthContext = createContext(null);
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
   const [token, setToken] = useState(localStorage.getItem('token'));
+  const [refreshToken, setRefreshToken] = useState(localStorage.getItem('refreshToken'));
   const [loading, setLoading] = useState(true);
   const [authMethod, setAuthMethod] = useState(null);
 
@@ -21,9 +22,11 @@ export function AuthProvider({ children }) {
   }, []);
 
   const handleAuthResponse = (res) => {
-    const { token: t, user: u, authMethod: m } = res.data;
+    const { token: t, refreshToken: rt, user: u, authMethod: m } = res.data;
     localStorage.setItem('token', t);
+    if (rt) localStorage.setItem('refreshToken', rt);
     setToken(t);
+    setRefreshToken(rt);
     setUser(u);
     setAuthMethod(m);
     return res.data;
@@ -35,11 +38,21 @@ export function AuthProvider({ children }) {
   const loginApiKey = (k) => authApi.loginApiKey(k).then(handleAuthResponse);
   const loginOAuth = (provider, t) => authApi.loginOAuth(provider, t).then(handleAuthResponse);
 
-  const logout = () => {
-    localStorage.removeItem('token');
-    setToken(null);
-    setUser(null);
-    setAuthMethod(null);
+  const logout = async () => {
+    try {
+      if (refreshToken) {
+        await authApi.logout(refreshToken);
+      }
+    } catch (err) {
+      console.error('Logout error:', err);
+    } finally {
+      localStorage.removeItem('token');
+      localStorage.removeItem('refreshToken');
+      setToken(null);
+      setRefreshToken(null);
+      setUser(null);
+      setAuthMethod(null);
+    }
   };
 
   const generateApiKey = async () => {
@@ -50,7 +63,7 @@ export function AuthProvider({ children }) {
 
   return (
     <AuthContext.Provider value={{
-      user, token, authMethod, loading,
+      user, token, refreshToken, authMethod, loading,
       register, loginJwt, loginBasic, loginApiKey, loginOAuth,
       logout, generateApiKey
     }}>
